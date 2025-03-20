@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Screen Sharing</title>
+    <script src="https://unpkg.com/peerjs@1.3.2/dist/peerjs.min.js"></script>
+</head>
+<style>
+/* Estilos generales */
+body {
+    font-family: 'Poppins', sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+    min-height: 100vh;
+    margin: 0;
+    padding: 20px;
+}
+
+/* Títulos */
+h1, h2 {
+    text-align: center;
+    margin-bottom: 10px;
+}
+
+/* Input para ingresar el ID */
+input {
+    font-size: 1rem;
+    padding: 8px;
+    margin: 10px;
+    border: 2px solid #ffcc00;
+    border-radius: 8px;
+    outline: none;
+    text-align: center;
+}
+
+/* Botones */
+button {
+    font-size: 1rem;
+    font-weight: bold;
+    padding: 10px 20px;
+    margin: 10px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s ease-in-out;
+}
+
+#startSharing {
+    background: #ff5722;
+    color: white;
+}
+
+#startCamera {
+    background: #009688;
+    color: white;
+}
+
+#playVideoButton {
+    background: #ffcc00;
+    color: #333;
+}
+
+button:hover {
+    transform: scale(1.1);
+    opacity: 0.8;
+}
+
+/* Contenedor de videos */
+.video-container {
+    display: flex;
+    justify-content: space-around;
+    flex-wrap: wrap;
+    width: 90%;
+    max-width: 900px;
+    margin-top: 20px;
+}
+
+/* Videos */
+video {
+    width: 55%;
+    box-shadow: 0px 0px 10px rgba(255, 255, 255, 0.5);
+}
+
+.explicacion{
+    font-size: 1.2rem;
+    margin: 10rem 2rem 0 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    text-align: left;
+    width: 55%;
+
+}
+
+
+
+</style>
+
+<body>
+    <h1>WebRTC - Compartir y Recibir Pantalla</h1>
+
+    <p>Tu ID de Peer: <span id="peerId">Esperando...</span></p>
+    <input type="text" id="peerIdInput" placeholder="Ingresa el ID de otro usuario">
+
+    <button id="startSharing">Iniciar Compartición</button>
+    <button id="startCamera"> Compartir Cámara</button>
+    <button id="playVideoButton" style="display: none;">▶ Reproducir Video</button>
+
+    <h2>Tu pantalla compartida</h2>
+    <video id="localVideo" autoplay playsinline muted></video>
+
+    <h2>Pantalla recibida desde otra pestaña</h2>
+    <video id="remoteVideo" autoplay playsinline></video>
+
+    <div class="explicacion">
+        <h2>📌 ¿Cómo funciona WebRTC con RTCPeerConnection y BroadcastChannel?</h2>
+        <p>
+            WebRTC permite la comunicación de video, audio y datos entre navegadores sin necesidad de un servidor
+            intermedio.
+            Para lograrlo, utilizamos <code>RTCPeerConnection</code> para establecer una conexión entre dos pestañas y
+            <code>BroadcastChannel</code> para intercambiar mensajes de señalización entre ellas.
+        </p>
+
+        <h3>📡 Proceso de conexión</h3>
+        <ol>
+            <li>Una pestaña inicia la compartición de pantalla usando
+                <code>navigator.mediaDevices.getDisplayMedia()</code>.
+            </li>
+            <li>Se crea un objeto <code>RTCPeerConnection</code> para gestionar la conexión WebRTC.</li>
+            <li>El emisor crea una <strong>oferta (offer)</strong> y la envía a través de <code>BroadcastChannel</code>
+                a otras pestañas.</li>
+            <li>Las pestañas receptoras reciben la oferta, crean una <strong>respuesta (answer)</strong> y la envían de
+                vuelta.</li>
+            <li>Ambos navegadores intercambian <strong>candidatos ICE</strong> para establecer la conexión directa.</li>
+            <li>Una vez establecida la conexión, la pantalla compartida se muestra en la pestaña receptora.</li>
+        </ol>
+
+        <h3>🔄 ¿Qué son las ofertas, respuestas y candidatos ICE?</h3>
+        <ul>
+            <li><strong>Offer (Oferta):</strong> La pestaña que inicia la conexión crea una oferta SDP y la envía al
+                receptor.</li>
+            <li><strong>Answer (Respuesta):</strong> La pestaña receptora responde con una descripción SDP.</li>
+            <li><strong>ICE Candidates:</strong> Son los datos de red que permiten conectar las dos pestañas a través de
+                Internet.</li>
+        </ul>
+
+        <h3>💡 ¿Por qué usamos BroadcastChannel?</h3>
+        <p>
+            <code>BroadcastChannel</code> permite la comunicación entre pestañas abiertas en el mismo navegador.
+            En este caso, lo usamos para intercambiar la oferta, la respuesta y los candidatos ICE, lo que permite
+            establecer una conexión WebRTC sin necesidad de un servidor externo.
+        </p>
+
+        <h3>🚀 Código de Ejemplo</h3>
+        <pre>
+<code>
+// Crear una conexión WebRTC
+const peerConnection = new RTCPeerConnection();
+
+// Crear un canal de comunicación entre pestañas
+const signalingChannel = new BroadcastChannel('webrtc-signaling');
+
+// Enviar oferta cuando se inicia la compartición
+async function startConnection() {
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+    stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
+
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+
+    signalingChannel.postMessage({ type: 'offer', offer });
+}
+
+// Manejar mensajes de la otra pestaña
+signalingChannel.onmessage = async (event) => {
+    if (event.data.type === 'offer') {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(event.data.offer));
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+        signalingChannel.postMessage({ type: 'answer', answer });
+    }
+};
+</code>
+</pre>
+
+        <h3>📚 Bibliografía</h3>
+        <p>
+            Para más información sobre WebRTC y sus funcionalidades, puedes consultar la documentación oficial y
+            ejemplos en:
+        </p>
+        <ul>
+            <li><a href="https://webrtc.github.io/samples/" target="_blank">WebRTC GitHub Samples</a></li>
+        </ul>
+    </div>
+
+
+    <script src="version_04.js"></script>
+</body>
+
+</html>

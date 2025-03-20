@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Screen Sharing</title>
+</head>
+
+<style>
+    body {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        flex-direction: column;
+    }
+
+    video {
+        width: 60%;
+        border: 1px solid black;
+    }
+
+    .explicacion {
+        display: flex;
+        width: 60%;
+        flex-direction: column;
+        align-items: center;
+        margin-top: 20px;
+    }
+
+    p,
+    li,
+    code {
+        font-size: 1.5rem;
+        line-height: 1.5;
+    }
+</style>
+
+<body>
+    <h1>WebRTC - Compartir y Recibir Pantalla</h1>
+    <button id="startSharing">Iniciar Compartición</button>
+    <button id="playVideoButton" style="display: none;">▶ Reproducir Video</button>
+
+    <h2>Tu pantalla compartida</h2>
+    <video id="localVideo" autoplay playsinline muted></video>
+
+    <h2>Pantalla recibida desde otra pestaña</h2>
+    <video id="remoteVideo" autoplay playsinline></video>
+
+    <div class="explicacion">
+        <h2>📌 ¿Cómo funciona WebRTC con RTCPeerConnection y BroadcastChannel?</h2>
+        <p>
+            WebRTC permite la comunicación de video, audio y datos entre navegadores sin necesidad de un servidor
+            intermedio.
+            Para lograrlo, utilizamos <code>RTCPeerConnection</code> para establecer una conexión entre dos pestañas y
+            <code>BroadcastChannel</code> para intercambiar mensajes de señalización entre ellas.
+        </p>
+
+        <h3>📡 Proceso de conexión</h3>
+        <ol>
+            <li>Una pestaña inicia la compartición de pantalla usando
+                <code>navigator.mediaDevices.getDisplayMedia()</code>.
+            </li>
+            <li>Se crea un objeto <code>RTCPeerConnection</code> para gestionar la conexión WebRTC.</li>
+            <li>El emisor crea una <strong>oferta (offer)</strong> y la envía a través de <code>BroadcastChannel</code>
+                a otras pestañas.</li>
+            <li>Las pestañas receptoras reciben la oferta, crean una <strong>respuesta (answer)</strong> y la envían de
+                vuelta.</li>
+            <li>Ambos navegadores intercambian <strong>candidatos ICE</strong> para establecer la conexión directa.</li>
+            <li>Una vez establecida la conexión, la pantalla compartida se muestra en la pestaña receptora.</li>
+        </ol>
+
+        <h3>🔄 ¿Qué son las ofertas, respuestas y candidatos ICE?</h3>
+        <ul>
+            <li><strong>Offer (Oferta):</strong> La pestaña que inicia la conexión crea una oferta SDP y la envía al
+                receptor.</li>
+            <li><strong>Answer (Respuesta):</strong> La pestaña receptora responde con una descripción SDP.</li>
+            <li><strong>ICE Candidates:</strong> Son los datos de red que permiten conectar las dos pestañas a través de
+                Internet.</li>
+        </ul>
+
+        <h3>💡 ¿Por qué usamos BroadcastChannel?</h3>
+        <p>
+            <code>BroadcastChannel</code> permite la comunicación entre pestañas abiertas en el mismo navegador.
+            En este caso, lo usamos para intercambiar la oferta, la respuesta y los candidatos ICE, lo que permite
+            establecer una conexión WebRTC sin necesidad de un servidor externo.
+        </p>
+
+        <h3>🚀 Código de Ejemplo</h3>
+        <pre>
+<code>
+// Crear una conexión WebRTC
+const peerConnection = new RTCPeerConnection();
+
+// Crear un canal de comunicación entre pestañas
+const signalingChannel = new BroadcastChannel('webrtc-signaling');
+
+// Enviar oferta cuando se inicia la compartición
+async function startConnection() {
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+    stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
+
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+
+    signalingChannel.postMessage({ type: 'offer', offer });
+}
+
+// Manejar mensajes de la otra pestaña
+signalingChannel.onmessage = async (event) => {
+    if (event.data.type === 'offer') {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(event.data.offer));
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+        signalingChannel.postMessage({ type: 'answer', answer });
+    }
+};
+</code>
+</pre>
+
+        <h3>📚 Bibliografía</h3>
+        <p>
+            Para más información sobre WebRTC y sus funcionalidades, puedes consultar la documentación oficial y
+            ejemplos en:
+        </p>
+        <ul>
+            <li><a href="https://webrtc.github.io/samples/" target="_blank">WebRTC GitHub Samples</a></li>
+        </ul>
+    </div>
+
+
+    <script>
+      const startSharingButton = document.getElementById('startSharing');
+const localVideo = document.getElementById('localVideo');
+const remoteVideo = document.getElementById('remoteVideo');
+const playVideoButton = document.getElementById('playVideoButton'); // Botón de reproducción manual
+const signalingChannel = new BroadcastChannel('webrtc-signaling');
+
+let peerConnection;
+let isSharing = false; // Si esta pestaña está compartiendo
+let iceCandidatesBuffer = []; // Buffer para ICE Candidates antes de setRemoteDescription()
+
+async function startScreenSharing() {
+    if (isSharing) return; // Evitar múltiples clics
+    isSharing = true;
+
+    try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        localVideo.srcObject = stream;
+
+        // Cerrar la conexión anterior si existe y está activa
+        if (peerConnection && peerConnection.signalingState !== "closed") {
+            console.warn("⚠️ Ya existe una conexión activa. Ignorando nueva oferta.");
+            return;
+        }
+
+        console.log("🔵 Creando nueva conexión WebRTC...");
+        peerConnection = new RTCPeerConnection();
+
+        // Enviar el stream de pantalla
+        stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
+
+        // Manejo de flujo entrante
+        peerConnection.ontrack = (event) => {
+            console.log("✅ Stream recibido:", event.streams[0]);
+            remoteVideo.srcObject = event.streams[0];
+
+            // Intentar reproducir automáticamente
+            remoteVideo.play().catch(error => {
+                console.warn("⚠️ No se pudo reproducir automáticamente:", error);
+                playVideoButton.style.display = "inline-block"; // Mostrar el botón si la reproducción falla
+            });
+        };
+
+        // Manejo de ICE Candidates
+        peerConnection.onicecandidate = (event) => {
+            if (event.candidate) {
+                console.log("📌 Enviando ICE Candidate...");
+                signalingChannel.postMessage({ type: 'candidate', candidate: event.candidate.toJSON() });
+            }
+        };
+
+        // Crear y enviar oferta SDP
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        signalingChannel.postMessage({ type: 'offer', offer });
+
+    } catch (error) {
+        console.error('❌ Error al compartir pantalla:', error);
+        isSharing = false;
+    }
+}
+
+// Agregar evento al botón "Reproducir Video"
+playVideoButton.addEventListener("click", () => {
+    if (remoteVideo.srcObject) {
+        remoteVideo.play().then(() => {
+            console.log("▶ Video reproduciéndose correctamente.");
+            playVideoButton.style.display = "none"; // Ocultar el botón después de hacer clic
+        }).catch(error => {
+            console.error("❌ No se pudo iniciar la reproducción manualmente:", error);
+        });
+    } else {
+        console.warn("⚠️ No hay ningún stream disponible para reproducir.");
+    }
+});
+
+signalingChannel.onmessage = async (event) => {
+    console.log("📩 Mensaje recibido:", event.data);
+
+    if (event.data.type === 'offer') {
+        if (peerConnection && peerConnection.signalingState !== "closed") {
+            console.warn("⚠️ Ya existe una conexión activa. Ignorando nueva oferta.");
+            return;
+        }
+
+        console.log("🔵 Creando nueva conexión WebRTC...");
+        peerConnection = new RTCPeerConnection();
+
+        peerConnection.ontrack = (event) => {
+            console.log("✅ Stream recibido:", event.streams[0]);
+            remoteVideo.srcObject = event.streams[0];
+
+            setTimeout(() => {
+                if (remoteVideo.srcObject !== event.streams[0]) {
+                    console.warn("⚠️ Volviendo a asignar el stream al remoteVideo...");
+                    remoteVideo.srcObject = event.streams[0];
+                }
+                remoteVideo.play().catch(error => {
+                    console.warn("⚠️ No se pudo reproducir automáticamente:", error);
+                    playVideoButton.style.display = "inline-block"; // Mostrar el botón si la reproducción falla
+                });
+            }, 500);
+        };
+
+        peerConnection.onicecandidate = (event) => {
+            if (event.candidate) {
+                console.log("📌 Enviando ICE Candidate...");
+                signalingChannel.postMessage({ type: 'candidate', candidate: event.candidate.toJSON() });
+            }
+        };
+
+        console.log("🔵 Aplicando setRemoteDescription(offer)");
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(event.data.offer));
+
+        // Aplicar ICE Candidates almacenados en buffer
+        while (iceCandidatesBuffer.length > 0) {
+            let candidate = iceCandidatesBuffer.shift();
+            console.log("✅ Aplicando ICE Candidate del buffer:", candidate);
+            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        }
+
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+        signalingChannel.postMessage({ type: 'answer', answer });
+
+    } else if (event.data.type === 'answer') {
+        console.log("🟢 Aplicando setRemoteDescription(answer)");
+        if (peerConnection.signalingState !== "stable") {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(event.data.answer));
+        } else {
+            console.warn("⚠️ La conexión ya está en estado 'stable', ignorando answer.");
+        }
+
+    } else if (event.data.type === 'candidate') {
+        console.log("📌 Agregando ICE Candidate...");
+        if (peerConnection.remoteDescription) {
+            await peerConnection.addIceCandidate(new RTCIceCandidate(event.data.candidate));
+        } else {
+            console.warn("⚠️ ICE Candidate recibido antes de setRemoteDescription(). Guardando en buffer.");
+            iceCandidatesBuffer.push(event.data.candidate);
+        }
+    }
+};
+
+startSharingButton.addEventListener('click', startScreenSharing);
+ 
+
+    </script>
+</body>
+
+</html>
